@@ -222,28 +222,6 @@ defmodule Membrane.RTP.SessionBin do
   end
 
   @impl true
-  def handle_pad_added(Pad.ref(:rtp_input, ref) = pad, _ctx, %{secure?: true} = state) do
-    parser_ref = {:rtp_parser, ref}
-    decryptor_ref = {:srtp_decryptor, ref}
-
-    children = %{
-      parser_ref => RTP.Parser,
-      decryptor_ref => %SRTP.Decryptor{policies: state.srtp_policies}
-    }
-
-    links = [
-      link_bin_input(pad, buffer: @rtp_input_buffer_params)
-      |> to(decryptor_ref)
-      |> to(parser_ref)
-      |> to(:ssrc_router)
-    ]
-
-    new_spec = %ParentSpec{children: children, links: links}
-
-    {{:ok, spec: new_spec}, state}
-  end
-
-  @impl true
   def handle_pad_added(Pad.ref(:rtp_input, ref) = pad, _ctx, state) do
     parser_ref = {:rtp_parser, ref}
 
@@ -257,21 +235,6 @@ defmodule Membrane.RTP.SessionBin do
 
     new_spec = %ParentSpec{children: children, links: links}
 
-    {{:ok, spec: new_spec}, state}
-  end
-
-  @impl true
-  def handle_pad_added(Pad.ref(:rtcp_input, ref) = pad, _ctx, %{secure?: true} = state) do
-    parser_ref = {:rtcp_parser, ref}
-    decryptor_ref = {:srtcp_decryptor, ref}
-
-    children = %{
-      parser_ref => RTCP.Parser,
-      decryptor_ref => %SRTCP.Decryptor{policies: state.srtp_policies}
-    }
-
-    links = [link_bin_input(pad) |> to(decryptor_ref) |> to(parser_ref)]
-    new_spec = %ParentSpec{children: children, links: links}
     {{:ok, spec: new_spec}, state}
   end
 
@@ -335,18 +298,6 @@ defmodule Membrane.RTP.SessionBin do
   end
 
   @impl true
-  def handle_pad_added(Pad.ref(:rtcp_output, _ref) = pad, _ctx, %{secure?: true} = state) do
-    new_children = [
-      srtcp_encryptor: %SRTCP.Encryptor{policies: state.receiver_srtp_policies},
-      rtcp_forwarder: RTCP.Forwarder
-    ]
-
-    new_links = [link(:rtcp_forwarder) |> to(:srtcp_encryptor) |> to_bin_output(pad)]
-    new_spec = %ParentSpec{children: new_children, links: new_links}
-    {{:ok, spec: new_spec, start_timer: {:rtcp_report_timer, state.rtcp_interval}}, state}
-  end
-
-  @impl true
   def handle_pad_added(Pad.ref(:rtcp_output, _ref) = pad, _ctx, state) do
     new_children = [rtcp_forwarder: RTCP.Forwarder]
     new_links = [link(:rtcp_forwarder) |> to_bin_output(pad)]
@@ -376,31 +327,7 @@ defmodule Membrane.RTP.SessionBin do
       {{:ok, spec: spec}, state}
     end
   end
-
-  defp sent_stream_spec(ssrc, payload_type, payloader, clock_rate, %{
-         secure?: true,
-         srtp_policies: policies
-       }) do
-    children = %{
-      {:stream_send_bin, ssrc} => %RTP.StreamSendBin{
-        ssrc: ssrc,
-        payload_type: payload_type,
-        payloader: payloader,
-        clock_rate: clock_rate
-      },
-      {:srtp_encryptor, ssrc} => %SRTP.Encryptor{policies: policies}
-    }
-
-    links = [
-      link_bin_input(Pad.ref(:input, ssrc))
-      |> to({:stream_send_bin, ssrc})
-      |> to({:srtp_encryptor, ssrc})
-      |> to_bin_output(Pad.ref(:rtp_output, ssrc))
-    ]
-
-    %ParentSpec{children: children, links: links}
-  end
-
+  
   defp sent_stream_spec(ssrc, payload_type, payloader, clock_rate, %{secure?: false}) do
     children = %{
       {:stream_send_bin, ssrc} => %RTP.StreamSendBin{
